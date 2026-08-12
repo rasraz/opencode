@@ -52,10 +52,10 @@ import { DirectoryDataProvider } from "@/pages/directory-layout"
 import Layout from "@/pages/layout"
 import { ErrorPage } from "./pages/error"
 import { useCheckServerHealth } from "./utils/server-health"
-import { legacySessionServer, sessionHref } from "./utils/session-route"
+import { legacySessionServer, requireServerKey, sessionHref } from "./utils/session-route"
 import { decode64 } from "@/utils/base64"
-import { TargetSessionRoute } from "@/pages/session-lazy"
 import { Home } from "@/pages/home"
+import { TargetSessionRouteContent } from "./pages/session"
 
 const NewSession = lazy(() => import("@/pages/new-session"))
 
@@ -75,7 +75,29 @@ const DirectoryDraftRedirect = () => {
   return null
 }
 
-// Target session route is lazy-loaded from target-session-route.tsx
+function TargetServerRoute(props: ParentProps) {
+  const params = useParams<{ serverKey: string; id: string }>()
+  const global = useGlobal()
+  const conn = createMemo(() => {
+    const key = requireServerKey(params.serverKey)
+    return global.servers.list().find((item) => ServerConnection.key(item) === key)
+  })
+
+  return (
+    // Owns the server-identity remount. Session changes must not remount this subtree.
+    <Show when={requireServerKey(params.serverKey)} keyed>
+      <ServerSDKProvider server={conn()}>
+        <ServerSyncProvider server={conn()}>{props.children}</ServerSyncProvider>
+      </ServerSDKProvider>
+    </Show>
+  )
+}
+
+const TargetSessionRoute = () => (
+  <TargetServerRoute>
+    <TargetSessionRouteContent />
+  </TargetServerRoute>
+)
 // Wraps the non-draft routes. They are gated on (and keyed to) the globally selected
 // server via ServerKey, then provide the server-scoped shell for that server.
 function SelectedServerProviders(props: ParentProps) {
@@ -107,16 +129,14 @@ function DraftRoute() {
 function ResolvedDraftRoute(props: { draft: DraftTab }) {
   const global = useGlobal()
   const conn = createMemo(() => global.servers.list().find((item) => ServerConnection.key(item) === props.draft.server))
-  const directory = () => props.draft.directory
-  const serverKey = () => props.draft.server
 
   return (
     <Show when={`${props.draft.server}\0${props.draft.directory}`} keyed>
-      <ServerSDKProvider server={conn}>
-        <ServerSyncProvider server={conn}>
-          <ModelsProvider directory={directory}>
-            <SDKProvider directory={directory}>
-              <DirectoryDataProvider directory={directory} server={serverKey}>
+      <ServerSDKProvider server={conn()}>
+        <ServerSyncProvider server={conn()}>
+          <ModelsProvider directory={props.draft.directory}>
+            <SDKProvider directory={props.draft.directory}>
+              <DirectoryDataProvider directory={props.draft.directory} server={props.draft.server}>
                 <DraftProviders>
                   <NewSession />
                 </DraftProviders>
@@ -220,7 +240,7 @@ function DesktopCommands() {
 }
 
 type ServerScopedShellProps = ParentProps<{
-  directory?: () => string | undefined
+  directory?: string
   serverScoped?: JSX.Element
 }>
 
